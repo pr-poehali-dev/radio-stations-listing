@@ -32,6 +32,35 @@ const BANNERS = [
 
 type Station = typeof DEFAULT_STATIONS[0];
 
+// ─── M3U Parser ──────────────────────────────────────────────────────────────
+async function resolveStreamUrl(url: string): Promise<string> {
+  const isPlaylist = /\.(m3u8?|pls)(\?|$)/i.test(url);
+  if (!isPlaylist) return url;
+
+  try {
+    const res = await fetch(url, { headers: { "Accept": "*/*" } });
+    const text = await res.text();
+
+    if (url.match(/\.pls/i)) {
+      const match = text.match(/^File\d+=(.+)$/m);
+      return match ? match[1].trim() : url;
+    }
+
+    // m3u / m3u8
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith("#"));
+    if (lines.length > 0) {
+      const first = lines[0];
+      // relative URL → absolute
+      if (first.startsWith("http")) return first;
+      const base = new URL(url);
+      return new URL(first, base).toString();
+    }
+  } catch {
+    // fallback — try to play original url directly
+  }
+  return url;
+}
+
 // ─── Wave Animation ──────────────────────────────────────────────────────────
 const WaveAnimation = () => (
   <div className="flex items-end gap-[2px] h-4">
@@ -136,10 +165,10 @@ const AddStationModal = ({ onClose, onAdd }: { onClose: () => void; onAdd: (s: S
             />
           </div>
           <div>
-            <label className="text-xs text-muted-foreground mb-1.5 block uppercase tracking-wide">Ссылка на поток * (mp3/aac)</label>
+            <label className="text-xs text-muted-foreground mb-1.5 block uppercase tracking-wide">Ссылка на поток * (mp3/aac/m3u/pls)</label>
             <input
               className="w-full bg-secondary border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary transition-colors"
-              placeholder="https://stream.example.com/live.mp3"
+              placeholder="https://stream.example.com/live.mp3 или .m3u"
               value={form.stream}
               onChange={e => setForm(p => ({ ...p, stream: e.target.value }))}
             />
@@ -387,16 +416,18 @@ export default function Index() {
     setIsLoading(true);
     setCurrentStation(station);
 
-    const audio = new Audio(station.stream);
-    audio.volume = volume;
-    audio.play().then(() => {
-      setIsPlaying(true);
-      setIsLoading(false);
-    }).catch(() => {
-      setIsPlaying(false);
-      setIsLoading(false);
+    resolveStreamUrl(station.stream).then(resolvedUrl => {
+      const audio = new Audio(resolvedUrl);
+      audio.volume = volume;
+      audio.play().then(() => {
+        setIsPlaying(true);
+        setIsLoading(false);
+      }).catch(() => {
+        setIsPlaying(false);
+        setIsLoading(false);
+      });
+      audioRef.current = audio;
     });
-    audioRef.current = audio;
 
     const time = new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
     setHistory(prev => [{ station, time }, ...prev.slice(0, 49)]);
